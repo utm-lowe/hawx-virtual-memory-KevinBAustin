@@ -72,10 +72,10 @@ vm_page_alloc(void)
   if(f){
     frame_table = f->next;
     memset((char*)f, 5, PGSIZE);
+    return (void*)f;
   }else
-    return 0x00;
-    
-  return (void*)f;
+    return 0;
+  
 }
 
 
@@ -140,15 +140,8 @@ vm_lookup(pagetable_t pagetable, uint64 va)
   pte_t *pte;
   uint64 pa;
 
-  if(va >= MAXVA)
-    return 0;
-
   pte = walk_pgtable(pagetable, va, 0);
   if(pte == 0)
-    return 0;
-  if((*pte & PTE_V) == 0)
-    return 0;
-  if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
   return pa;
@@ -172,13 +165,18 @@ vm_page_insert(pagetable_t pagetable, uint64 va, uint64 pa, int perm)
   //       Ask yourself, how can this function fail without
   //       panicking?
   // YOUR CODE HERE
-  uint64 a = va/PGSIZE;
   pte_t *pte;
-  if((pte = walk_pgtable(pagetable, a, 0)) == 1)
-    panic("remap");
-  else{
-    *pte = PA2PTE(pa) | perm | PTE_V;
-  }
+
+  va = PGROUNDDOWN(va);
+
+  pte = walk_pgtable(pagetable, va, 1);
+  
+  if(pte == 0)
+    return -1;
+
+  *pte = PA2PTE(pa) | perm | PTE_V;
+
+  return 0;
 }
 
 
@@ -226,8 +224,7 @@ vm_map_range(pagetable_t pagetable, uint64 va, uint64 size, int perm)
   // We will allocate a new physical page frame for each page, and
   // then use vm_page_insert to add the page to the table.
   // YOUR CODE HERE
-  uint64 a, last;
-  pte_t *pte;
+  uint64 pa, start, last;
 
   if((va % PGSIZE) != 0)
     panic("mappages: va not aligned");
@@ -238,17 +235,18 @@ vm_map_range(pagetable_t pagetable, uint64 va, uint64 size, int perm)
   if(size == 0)
     panic("mappages: size");
 
-  a = va;
-  last = va + size - PGSIZE;
+  start = PGROUNDDOWN(va);
+  last = PGROUNDDOWN(va + size - 1);
   for(;;){
-    if((pte = walk_pgtable(pagetable, a, 1)) == 0)
+    if(pa = vm_page_alloc() == 0)
       return -1;
-    if(*pte & PTE_V)
-      panic("remap");
-    vm_page_insert(pagetable, a, vm_lookup(pagetable, va), perm);
-    if(a == last)
+    if(vm_page_insert(pagetable, va, pa, perm) < 0){
+      vm_page_free((void *)pa);
+      return -1;
+    }
+    if(start == last)
       break;
-    a += PGSIZE;
+    start += PGSIZE;
   }
   return 0;
 }
@@ -365,8 +363,8 @@ kernel_map_range(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int p
   if(size == 0)
     panic("mappages: size");
 
-  a = va;
-  last = va + size - PGSIZE;
+  a = PGROUNDDOWN(va);
+  last = PGROUNDDOWN(va + size - 1);
   for(;;){
     if((pte = walk_pgtable(pagetable, a, 1)) == 0)
       return -1;
